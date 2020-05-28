@@ -139,8 +139,8 @@ SimpleXmlParser::findStartTagDelimiters(const QString &i_msg, const QString &i_t
   \param i_msg the message to parse
   \param i_tag the tag we want to find and parse
   \param i_offset the initial offset we should start looking the tag from, its default is 0
-  \return the string contained within the found tag
-  \note we assume the tag ALWAYS exists
+  \param defaultValue the value returned if the tag is not found
+  \return the string contained within the found tag or defaultValue if the tag is not found
   */
 QString
 SimpleXmlParser::getTagValue(const QString & i_msg, const QString & i_tag, int i_offset, QString defaultValue)
