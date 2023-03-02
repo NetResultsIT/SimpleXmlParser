@@ -16,5 +16,5 @@ TEMPLATE = app
 }
 
 win32 {
-TEMPLATE = vcapp
+TEMPLATE = app
 }

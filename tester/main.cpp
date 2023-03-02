@@ -28,5 +28,9 @@ int main(int argc, char** argv) {
         qDebug() << "parsed: " << s;
     }
 
+    SimpleXmlParser::test_getTag();
+    SimpleXmlParser::test_getProperty();
+    SimpleXmlParser::test_addData();
+
 return app.exec();
 }
