@@ -48,8 +48,8 @@ public:
     void emptyBuffer();
     QString getCurrentBuffer() const;
 
-    static QString      getTagValue          (const QString &msg, const QString &tag, int beginidx=0, QString defaultValue=QString());
-    static QString      getDecodedTagValue   (const QString &msg, const QString &tag, int beginidx=0, QString defaultValue=QString());
+    static QString      getTagValue          (const QString &msg, const QString &tag, int beginidx=0, QString defaultValue="");
+    static QString      getDecodedTagValue   (const QString &msg, const QString &tag, int beginidx=0, QString defaultValue="");
 
     static QStringList  getTagsValues        (const QString &msg, const QString &tag);
     static QStringList  getDecodedTagsValues (const QString &msg, const QString &tag);

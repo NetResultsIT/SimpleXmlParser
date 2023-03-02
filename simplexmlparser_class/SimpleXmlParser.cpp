@@ -8,7 +8,7 @@
 
 #include <QDebug>
 #include <QStringList>
-#include <QRegExp>
+#include <QRegularExpression>
 
 /*!
    \class SimpleXmlParser
@@ -69,13 +69,22 @@ SimpleXmlParser::decodeEntities(const QString &s)
     // remove invalid chars (replacement char has U+FFFD as unicode code)
     ret.replace(QChar(0xFFFD), " ");
 
-    QRegExp re("&#([0-9]+);|&#x([0-9A-F]+);", Qt::CaseInsensitive);
-    re.setMinimal(true);
-    int pos = 0;
-    while(-1 != (pos = re.indexIn(s, pos))) {
-        ret.replace(re.cap(0), QChar(re.cap(0).startsWith("&#x") ? re.cap(2).toInt(0, 16) : re.cap(1).toInt(0, 10)));
-        pos += re.matchedLength();
+    QRegularExpression re("&#([0-9]+);|&#x([0-9A-F]+);",
+                          QRegularExpression::CaseInsensitiveOption | QRegularExpression::UseUnicodePropertiesOption);
+
+    QRegularExpressionMatchIterator i = re.globalMatch(ret);
+    int offset = 0;
+    while (i.hasNext()) {
+        QRegularExpressionMatch match = i.next();
+        QString matched = match.captured(0);
+        int position = match.capturedStart();
+        int length = matched.length();
+        QString decoded = QChar(matched.startsWith("&#x") ? match.captured(2).toInt(0, 16) : match.captured(1).toInt(0, 10));
+
+        ret.replace(position + offset, length, decoded);
+        offset += decoded.length() - length;
     }
+
     return ret;
 }
 
@@ -113,23 +122,28 @@ SimpleXmlParser::encodeEntities(const QString &s, bool encodeNonAscii)
 bool
 SimpleXmlParser::findStartTagDelimiters(const QString &i_msg, const QString &i_tagname, int i_beginidx, int &o_startIdx, int &o_endIdx)
 {
-    QRegExp rx("<"+i_tagname+"[>|\\s]");     //find the beginning of the start tag (we use the \\s to avoid mismatches
-    QRegExp endrx("(>|/>)");            //to check where the start tag ends (handling properties)
+    QRegularExpression rx("<"+i_tagname+"[>|\\s]");     //find the beginning of the start tag (we use the \\s to avoid mismatches
+    QRegularExpression endrx("(>|/>)");            //to check where the start tag ends (handling properties)
 
 
-    o_startIdx  = i_msg.indexOf(rx, i_beginidx);
-    o_endIdx    = i_msg.indexOf(endrx, o_startIdx);
+    QRegularExpressionMatch startMatch = rx.match(i_msg, i_beginidx);
+        o_startIdx = startMatch.capturedStart();
+        if (!startMatch.hasMatch()) {
+            return false;
+        }
 
-#ifdef SXML_DBG
-    qDebug() << "Matched/captured text:" << endrx.capturedTexts();
-    qDebug() << "idx, endix: " << o_startIdx << o_endIdx;
-#endif
+        QRegularExpressionMatch endMatch = endrx.match(i_msg, o_startIdx);
+        o_endIdx = endMatch.capturedStart();
+        if (!endMatch.hasMatch()) {
+            return false;
+        }
 
-    if (endrx.cap(1) == "/>") {
-        return true;
-    }
+    #ifdef SXML_DBG
+        qDebug() << "Matched/captured text:" << endMatch.capturedTexts();
+        qDebug() << "idx, endix: " << o_startIdx << o_endIdx;
+    #endif
 
-    return false;
+        return endMatch.captured(1) == "/>";
 }
 
 
@@ -139,14 +153,14 @@ SimpleXmlParser::findStartTagDelimiters(const QString &i_msg, const QString &i_t
   \param i_msg the message to parse
   \param i_tag the tag we want to find and parse
   \param i_offset the initial offset we should start looking the tag from, its default is 0
-  \param defaultValue the value returned if the tag is not found
-  \return the string contained within the found tag or defaultValue if the tag is not found
+  \return the string contained within the found tag
+  \note we assume the tag ALWAYS exists
   */
 QString
 SimpleXmlParser::getTagValue(const QString & i_msg, const QString & i_tag, int i_offset, QString defaultValue)
 {
     QString tagname = i_tag;
-    tagname.replace(QRegExp("[<>]"),"");
+    tagname.remove(QRegularExpression("[<>]"));
     QString endtag = "</" + tagname + ">";
 
     int idx, endidx;
@@ -190,8 +204,8 @@ SimpleXmlParser::getTagsValues(const QString & _msg, const QString & _tag)
         QStringList vlist;
         int idx,last=0;
         QString ntag = _tag;
-        ntag.replace(QRegExp("[<>]"),"");
-        QRegExp rx("<" + ntag + "[\\s*|>]");
+        ntag.remove(QRegularExpression("[<>]"));
+        QRegularExpression rx("<" + ntag + "[\\s*|>]");
         int numtags = _msg.count(rx);
         for (int i=0; i<numtags; i++) {
 #ifdef SXML_DBG
@@ -225,7 +239,7 @@ SimpleXmlParser::getTagProperties(const QString &i_msg, const QString &i_tag, in
     QMap<QString, QString> map;
 
     QString tagname = i_tag;
-    tagname.replace(QRegExp("[<>]"), "");
+    tagname.remove(QRegularExpression("[<>]"));
 
     int idx, endidx;
     findStartTagDelimiters(i_msg, tagname, i_offset, idx, endidx);
@@ -236,7 +250,7 @@ SimpleXmlParser::getTagProperties(const QString &i_msg, const QString &i_tag, in
     qDebug() << "Properties string: " << tmpprop;
 #endif
 
-    tmpprop.replace(QRegExp("\\s*=\\s*"),"=");
+    tmpprop.replace(QRegularExpression("\\s*=\\s*"),"=");
 
 #ifdef SXML_DBG
     qDebug() << "sanitized Properties string: " << tmpprop.trimmed();
@@ -244,28 +258,22 @@ SimpleXmlParser::getTagProperties(const QString &i_msg, const QString &i_tag, in
 
     QStringList sl;
 
-    QRegExp rx("(\\w+(?:(?:-\\w+)*)?=\".*\")");
-    rx.setMinimal(true);
-    int pos = 0;
-    while ( (pos = rx.indexIn(tmpprop.trimmed(), pos)) != -1 ) {
-        //qDebug() << "1) found " << rx.captureCount() << "match(es)" << rx.capturedTexts();
-        for (int i=1; i<=rx.captureCount(); i++) {
-            if(!rx.cap(i).isEmpty())
-                sl << rx.cap(i);
+    QRegularExpression rx("(\\w+(?:(?:-\\w+)*)?=\".*\")", QRegularExpression::UseUnicodePropertiesOption);
+    QRegularExpressionMatchIterator rxMatchIterator = rx.globalMatch(tmpprop.trimmed());
+
+    while (rxMatchIterator.hasNext()) {
+        QRegularExpressionMatch match = rxMatchIterator.next();
+        if (match.hasMatch() && !match.captured(0).isEmpty()) {
+            sl << match.captured(0);
         }
-        pos += rx.matchedLength();
     }
 
-    QRegExp rx2("(\\w+(?:(?:-\\w+)*)?='.*')");
-    rx2.setMinimal(true);
-    pos = 0;
-    while ( (pos = rx2.indexIn(tmpprop.trimmed(), pos)) != -1 ) {
-        //qDebug() << "2) found " << rx2.captureCount() << "match(es)" << rx2.capturedTexts();
-        for (int i=1; i<=rx2.captureCount(); i++) {
-            if(!rx2.cap(i).isEmpty())
-                sl << rx2.cap(i);
-        }
-        pos += rx2.matchedLength();
+    QRegularExpression rx2("(\\w+(?:(?:-\\w+)*)?='[^']*')", QRegularExpression::UseUnicodePropertiesOption);
+
+    QRegularExpressionMatchIterator rx2MatchIterator = rx2.globalMatch(tmpprop.trimmed());
+    while (rx2MatchIterator.hasNext()) {
+        QRegularExpressionMatch match = rx2MatchIterator.next();
+        sl << match.captured();
     }
 
 #ifdef SXML_DBG
@@ -278,7 +286,7 @@ SimpleXmlParser::getTagProperties(const QString &i_msg, const QString &i_tag, in
         qDebug() << "Found Property: " << s;
 #endif
 
-        QStringList sl2 = s.trimmed().split("=",QString::SkipEmptyParts);
+        QStringList sl2 = s.trimmed().split("=",Qt::SkipEmptyParts);
 
 #ifdef SXML_DBG
         qDebug() << sl2;
@@ -299,8 +307,8 @@ SimpleXmlParser::getTagsProperties(const QString &i_msg, const QString &i_tag)
 
     int idx,last=0;
     QString ntag = i_tag;
-    ntag.replace(QRegExp("[<>]"), "");
-    QRegExp rx("<" + ntag + "[\\s*|>]");
+    ntag.remove(QRegularExpression("[<>]"));
+    QRegularExpression rx("<" + ntag + "[\\s*|>]");
     int numtags = i_msg.count(rx);
     for (int i=0; i<numtags; i++) {
 #ifdef SXML_DBG
@@ -386,8 +394,8 @@ SimpleXmlParser::test_getTag()
     qDebug() << "Test 6b passed\n----------\n";
 
     rs = SimpleXmlParser::getTagValue(ts7, "pippo");
-    qDebug() << "Result: " << rs;
-    Q_ASSERT(rs=="alice < bob’s mom & '3 > 1' éà€");
+    qDebug() << "Result: " << decodeEntities(rs);
+    Q_ASSERT(decodeEntities(rs)=="alice < bob’s mom & '3 > 1' éà€");
     qDebug() << "Test 7 passed\n----------\n";
 }
 
@@ -419,29 +427,32 @@ SimpleXmlParser::test_getProperty()
 
     QString ts6 = "<pippo p1=\"alice &lt; bob&#x2019;s mom &amp; '3 &gt; 1'\" p2='&#233;&#224;&#8364;'>ciao</pippo>";
 
-
-    QMap<QString, QString> rm,rm2;
+    QMultiMap<QString, QString>* rm;
+    QMultiMap<QString, QString>* rm2;
     QList<QMap<QString, QString> >rmlist;
 
-    rm = SimpleXmlParser::getTagProperties(ts1, "pippo");
-    qDebug() << "Result: " << rm;
-    Q_ASSERT(rm.contains("p1"));
-    Q_ASSERT(rm["p1"]=="bello");
+    rm = new QMultiMap<QString, QString>(SimpleXmlParser::getTagProperties(ts1, "pippo"));
+    qDebug() << "Result: " << *rm;
+    Q_ASSERT(rm->contains("p1"));
+    Q_ASSERT(rm->value("p1")=="bello");
     qDebug() << "Test 1 passed\n----------\n";
+    delete rm;
 
-    rm = SimpleXmlParser::getTagProperties(ts2, "pippo");
-    qDebug() << "Result: " << rm;
-    Q_ASSERT(rm.contains("p1"));
-    Q_ASSERT(rm["p1"]=="bello  sguardo");
+    rm = new QMultiMap<QString, QString>(SimpleXmlParser::getTagProperties(ts2, "pippo"));
+    qDebug() << "Result: " << *rm;
+    Q_ASSERT(rm->contains("p1"));
+    Q_ASSERT(rm->value("p1")=="bello  sguardo");
     qDebug() << "Test 2 passed\n----------\n";
+    delete rm;
 
-    rm = SimpleXmlParser::getTagProperties(ts3, "pippo");
-    qDebug() << "Result: " << rm;
-    Q_ASSERT(rm.contains("p1"));
-    Q_ASSERT(rm["p1"]=="bello 'sguardo' ");
-    Q_ASSERT(rm.contains("p2"));
-    Q_ASSERT(rm["p2"]=="ciccio");
+    rm = new QMultiMap<QString, QString>(SimpleXmlParser::getTagProperties(ts3, "pippo"));
+    qDebug() << "Result: " << *rm;
+    Q_ASSERT(rm->contains("p1"));
+    Q_ASSERT(rm->value("p1")=="bello 'sguardo' ");
+    Q_ASSERT(rm->contains("p2"));
+    Q_ASSERT(rm->value("p2")=="ciccio");
     qDebug() << "Test 3 passed\n----------\n";
+    delete rm;
 
     rmlist = SimpleXmlParser::getTagsProperties(ts4, "pippo");
     qDebug() << "Result0: " << rmlist.at(0);
@@ -456,26 +467,28 @@ SimpleXmlParser::test_getProperty()
     Q_ASSERT(rmlist.at(1)["p3"]=="ciccio2");
     qDebug() << "Test 4 passed\n----------\n";
 
-    rm = SimpleXmlParser::getTagProperties(ts5, "trap");
-    rm2 = SimpleXmlParser::getTagProperties(ts5, "body");
-    rm.unite(rm2);
-    qDebug() << "Result: " << rm;
-    Q_ASSERT(rm.contains("eventType"));
-    Q_ASSERT(rm["eventType"]=="userInput");
-    Q_ASSERT(rm.contains("networkType"));
-    Q_ASSERT(rm["networkType"]=="eth");
-    Q_ASSERT(rm.contains("eventName"));
-    Q_ASSERT(rm["eventName"]=="PLAY");
+    rm = new QMultiMap<QString, QString>(SimpleXmlParser::getTagProperties(ts5, "trap"));
+    rm2 = new QMultiMap<QString, QString>(SimpleXmlParser::getTagProperties(ts5, "body"));
+    rm->unite(*rm2);
+    qDebug() << "Result: " << *rm;
+    Q_ASSERT(rm->contains("eventType"));
+    Q_ASSERT(rm->value("eventType")=="userInput");
+    Q_ASSERT(rm->contains("networkType"));
+    Q_ASSERT(rm->value("networkType")=="eth");
+    Q_ASSERT(rm->contains("eventName"));
+    Q_ASSERT(rm->value("eventName")=="PLAY");
     qDebug() << "Test 5 passed\n----------\n";
+    delete rm2;
+    delete rm;
 
-    rm = SimpleXmlParser::getTagProperties(ts3, "pippo");
-    qDebug() << "Result: " << rm;
-    Q_ASSERT(rm.contains("p1"));
-    Q_ASSERT(decodeEntities(rm["p1"])=="alice < bob’s mom & '3 > 1'");
-    Q_ASSERT(rm.contains("p2"));
-    Q_ASSERT(decodeEntities(rm["p2"])=="éà€");
+    rm = new QMultiMap<QString, QString>(SimpleXmlParser::getTagProperties(ts6, "pippo"));
+    qDebug() << "Result: " << *rm;
+    Q_ASSERT(rm->contains("p1"));
+    Q_ASSERT(decodeEntities(rm->value("p1"))=="alice < bob’s mom & '3 > 1'");
+    Q_ASSERT(rm->contains("p2"));
+    Q_ASSERT(decodeEntities(rm->value("p2"))=="éà€");
     qDebug() << "Test 6 passed\n----------\n";
-
+    delete rm;
 }
 
 void
@@ -497,6 +510,7 @@ SimpleXmlParser::test_addData()
     {
         rs = xmlParser.getNextMessage();
     }
+    qDebug() << "Result: " << decodeEntities(rs);
     Q_ASSERT(rs == (tsPart1 + tsPart2));
     qDebug() << "Test 1 passed\n----------\n";
 }
