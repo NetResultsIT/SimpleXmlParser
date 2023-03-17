@@ -286,7 +286,11 @@ SimpleXmlParser::getTagProperties(const QString &i_msg, const QString &i_tag, in
         qDebug() << "Found Property: " << s;
 #endif
 
+#if QT_VERSION < QT_VERSION_CHECK(5,14,0)
+        QStringList sl2 = s.trimmed().split("=",QString::SkipEmptyParts);
+#else
         QStringList sl2 = s.trimmed().split("=",Qt::SkipEmptyParts);
+#endif
 
 #ifdef SXML_DBG
         qDebug() << sl2;
